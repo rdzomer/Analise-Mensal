@@ -255,7 +255,13 @@ def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str
                                                         hovertemplate="Média Móvel China: %{customdata}<extra></extra>"))
                 fig_import.update_layout(title=f"<b>Importação (KG) Total vs China - {selected_key_display}</b>",
                                         xaxis_title="Mês/Ano", yaxis_title="KG Importado", barmode='group',
-                                        hovermode="x unified", plot_bgcolor='white', legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
+                                        hovermode="x unified", plot_bgcolor='white',
+                                        legend=dict( # ////// ALTERAÇÃO AQUI //////
+                                            yanchor="top",
+                                            y=0.99,
+                                            xanchor="right", # Alterado de "left"
+                                            x=0.99         # Alterado de 0.01
+                                        ))
                 fig_import.update_xaxes(categoryorder='array', categoryarray=ncm_plot_data['Mês/Ano (Eixo X)'].unique(),
                                         showgrid=True, gridwidth=1, gridcolor='LightGrey', griddash='dot')
                 max_y_imp = 0
