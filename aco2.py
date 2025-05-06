@@ -7,7 +7,7 @@ import numpy as np
 from unidecode import unidecode
 
 # --- Constantes ---
-FILE_PATH = 'https://raw.githubusercontent.com/rdzomer/Analise-Mensal/refs/heads/main/H_EXPORTACAO_E%20IMPORTACAO_GERAL_2024-01_2025-12_DT20250506.xlsx' # <-- ALTERADO AQUI
+FILE_PATH = 'https://raw.githubusercontent.com/rdzomer/Analise-Mensal/refs/heads/main/H_EXPORTACAO_E%20IMPORTACAO_GERAL_2024-01_2025-12_DT20250506.xlsx'
 SHEET_NAME = 'Resultado'
 
 COL_MES = 'Mês'
@@ -33,7 +33,7 @@ GROUP_DESCRIPTIONS = {
     "IABr": "Agregado NCMs IABr (Diversos)"
 }
 
-
+# --- Funções de Utilidade (sem alteração em relação à versão anterior) ---
 def format_number_br(value, decimal_places=2):
     try:
         num = float(value)
@@ -55,23 +55,20 @@ MESES_NUM_TO_NOME_ABBR = {
 }
 
 @st.cache_data
-def load_data(file_path_url, sheet_name): # Renomeado para file_path_url para clareza
+def load_data(file_path_url, sheet_name):
     try:
-        # pd.read_excel pode ler diretamente de um URL
         df = pd.read_excel(file_path_url, sheet_name=sheet_name, engine='openpyxl')
         if COL_NCM_CODIGO in df.columns:
             df[COL_NCM_CODIGO] = df[COL_NCM_CODIGO].astype(str).str.replace('.', '', regex=False)
         return df
-    except FileNotFoundError: # Pode não ser o erro mais comum com URLs, mas mantido por segurança
+    except FileNotFoundError:
         st.error(f"Arquivo/URL não encontrado: {file_path_url}")
         return pd.DataFrame()
-    except Exception as e: # Erro genérico para capturar problemas de rede, formato, etc.
+    except Exception as e:
         st.error(f"Erro ao carregar dados do URL '{file_path_url}': {e}")
-        # Tentar fornecer mais detalhes se for um erro de aba
         if "Worksheet named" in str(e) and "not found" in str(e):
              st.info(f"Verifique se a aba '{sheet_name}' existe no arquivo online.")
         return pd.DataFrame()
-
 
 def clean_data(df: pd.DataFrame) -> pd.DataFrame:
     df_copy = df.copy()
@@ -80,7 +77,7 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
         df_copy[COL_MES] = df_copy[COL_MES].apply(lambda x: unidecode(str(x).split('. ')[1].upper()) if isinstance(x, str) and '. ' in x else unidecode(str(x).upper()))
         df_copy["month_num"] = df_copy[COL_MES].map(MESES_MAP)
         if df_copy["month_num"].isnull().any():
-            st.warning(f"Alguns meses não puderam ser mapeados para números e serão descartados: {df_copy[df_copy['month_num'].isnull()]['month_name_original'].unique()}")
+            #st.warning(f"Alguns meses não puderam ser mapeados para números e serão descartados: {df_copy[df_copy['month_num'].isnull()]['month_name_original'].unique()}")
             df_copy.dropna(subset=["month_num"], inplace=True)
         if "month_num" in df_copy.columns and not df_copy["month_num"].empty:
              df_copy["month_num"] = df_copy["month_num"].astype(int)
@@ -105,102 +102,75 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 def prep_yearly_data(df_input: pd.DataFrame, ano: int, meses_a_considerar: int) -> pd.DataFrame:
     col_exp_kg_actual = COL_EXPORT_KG_FORMAT.format(ano)
     col_imp_kg_actual = COL_IMPORT_KG_FORMAT.format(ano)
-
     required_cols_in_prep = [col_exp_kg_actual, col_imp_kg_actual, COL_PAIS, COL_NCM_CODIGO, "month_num"]
-    
     missing_cols = [col for col in required_cols_in_prep if col not in df_input.columns]
     if missing_cols:
         return pd.DataFrame(columns=[COL_NCM_CODIGO, "month_num", col_exp_kg_actual, "Importacao_kg_Total", "Importacao_kg_China"])
-
     df_input_copy = df_input.copy()
-
     if "month_num" not in df_input_copy.columns or df_input_copy["month_num"].isnull().all():
         return pd.DataFrame(columns=[COL_NCM_CODIGO, "month_num", col_exp_kg_actual, "Importacao_kg_Total", "Importacao_kg_China"])
-
     df_sub = df_input_copy[
         (df_input_copy["month_num"] >= 1) &
         (df_input_copy["month_num"] <= meses_a_considerar)
     ].copy()
-
     if df_sub.empty:
         return pd.DataFrame(columns=[COL_NCM_CODIGO, "month_num", col_exp_kg_actual, "Importacao_kg_Total", "Importacao_kg_China"])
-
     df_sub[col_exp_kg_actual] = pd.to_numeric(df_sub[col_exp_kg_actual], errors='coerce').fillna(0)
     df_sub[col_imp_kg_actual] = pd.to_numeric(df_sub[col_imp_kg_actual], errors='coerce').fillna(0)
-
     grouped_total = (
         df_sub.groupby([COL_NCM_CODIGO, "month_num", COL_PAIS])[[col_exp_kg_actual, col_imp_kg_actual]]
-        .sum()
-        .reset_index()
+        .sum().reset_index()
     )
-
     export_sum = grouped_total.groupby([COL_NCM_CODIGO, "month_num"])[col_exp_kg_actual].sum().reset_index()
-
     import_china_df = grouped_total[grouped_total[COL_PAIS].str.strip().str.upper() == 'CHINA'].copy()
     import_china_df = import_china_df.groupby([COL_NCM_CODIGO, "month_num"])[col_imp_kg_actual].sum().reset_index()
     import_china_df.rename(columns={col_imp_kg_actual: "Importacao_kg_China"}, inplace=True)
-
     import_total_sum = grouped_total.groupby([COL_NCM_CODIGO, "month_num"])[col_imp_kg_actual].sum().reset_index()
     import_total_sum.rename(columns={col_imp_kg_actual: "Importacao_kg_Total"}, inplace=True)
-
     current_year_data = pd.merge(export_sum, import_total_sum, on=[COL_NCM_CODIGO, "month_num"], how='outer')
     current_year_data = pd.merge(current_year_data, import_china_df, on=[COL_NCM_CODIGO, "month_num"], how='left')
-
     current_year_data["Importacao_kg_China"] = current_year_data["Importacao_kg_China"].fillna(0)
     current_year_data["Importacao_kg_Total"] = current_year_data["Importacao_kg_Total"].fillna(0)
     current_year_data[col_exp_kg_actual] = current_year_data[col_exp_kg_actual].fillna(0)
-
     return current_year_data
 
 def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str, selected_description: str, selected_graphs: list):
     st.header(f"Análise para: {selected_key_display} - {selected_description}")
-
     is_group = selected_key_display in NCM_GROUPS
     ncms_to_process = NCM_GROUPS.get(selected_key_display) if is_group else [selected_key_display]
-
     if not ncms_to_process:
         st.error(f"Nenhum NCM encontrado para a seleção: {selected_key_display}")
         return
-
     meses_2024 = 12
-    meses_2025 = 12 
-
+    meses_2025 = 12
     df_2024_prepared = prep_yearly_data(df_cleaned.copy(), 2024, meses_2024)
     df_2025_prepared = prep_yearly_data(df_cleaned.copy(), 2025, meses_2025)
-
     data_2024_filtered = df_2024_prepared[df_2024_prepared[COL_NCM_CODIGO].isin(ncms_to_process)].copy() if not df_2024_prepared.empty else pd.DataFrame()
     data_2025_filtered = df_2025_prepared[df_2025_prepared[COL_NCM_CODIGO].isin(ncms_to_process)].copy() if not df_2025_prepared.empty else pd.DataFrame()
-    
     export_col_2024 = COL_EXPORT_KG_FORMAT.format(2024)
     export_col_2025 = COL_EXPORT_KG_FORMAT.format(2025)
-    
     cols_to_aggregate_2024 = [export_col_2024, "Importacao_kg_Total", "Importacao_kg_China"]
     cols_to_aggregate_2025 = [export_col_2025, "Importacao_kg_Total", "Importacao_kg_China"]
-
     for col in cols_to_aggregate_2024:
         if col not in data_2024_filtered.columns and not data_2024_filtered.empty: data_2024_filtered[col] = 0
     for col in cols_to_aggregate_2025:
         if col not in data_2025_filtered.columns and not data_2025_filtered.empty: data_2025_filtered[col] = 0
-        
     if is_group:
         if not data_2024_filtered.empty:
             ncm_data_2024 = data_2024_filtered.groupby("month_num")[cols_to_aggregate_2024].sum().reset_index()
         else:
             ncm_data_2024 = pd.DataFrame(columns=["month_num"] + cols_to_aggregate_2024)
-
         if not data_2025_filtered.empty:
             ncm_data_2025 = data_2025_filtered.groupby("month_num")[cols_to_aggregate_2025].sum().reset_index()
         else:
             ncm_data_2025 = pd.DataFrame(columns=["month_num"] + cols_to_aggregate_2025)
-    else: 
+    else:
         ncm_data_2024 = data_2024_filtered
         ncm_data_2025 = data_2025_filtered
-    
     if not ncm_data_2024.empty and export_col_2024 in ncm_data_2024.columns:
         ncm_data_2024.rename(columns={export_col_2024: 'Exportacao_kg'}, inplace=True)
     if not ncm_data_2025.empty and export_col_2025 in ncm_data_2025.columns:
         ncm_data_2025.rename(columns={export_col_2025: 'Exportacao_kg'}, inplace=True)
-
     plot_data_list = []
     if not ncm_data_2024.empty:
         ncm_data_2024['Ano'] = 2024
@@ -208,24 +178,20 @@ def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str
     if not ncm_data_2025.empty:
         ncm_data_2025['Ano'] = 2025
         plot_data_list.append(ncm_data_2025)
-
     ncm_plot_data = pd.DataFrame()
     if plot_data_list:
         ncm_plot_data = pd.concat(plot_data_list, ignore_index=True)
-
     if ncm_plot_data.empty or "month_num" not in ncm_plot_data.columns or ncm_plot_data["month_num"].isnull().all():
         st.info(f"Não há dados suficientes para os gráficos de série temporal de {selected_key_display}.")
     else:
         ncm_plot_data.sort_values(by=['Ano', 'month_num'], inplace=True)
         ncm_plot_data['Mês/Ano (Eixo X)'] = ncm_plot_data['month_num'].map(MESES_NUM_TO_NOME_ABBR) + '/' + ncm_plot_data['Ano'].astype(str).str[-2:]
-
         for col in ['Exportacao_kg', 'Importacao_kg_Total', 'Importacao_kg_China']:
             if col in ncm_plot_data.columns:
                 ncm_plot_data[f'{col}_SMA'] = ncm_plot_data[col].rolling(window=SMA_WINDOW, min_periods=1).mean()
-            else: 
+            else:
                 ncm_plot_data[col] = 0
                 ncm_plot_data[f'{col}_SMA'] = 0
-
         if "Exportação (KG)" in selected_graphs:
             st.subheader("Análise de Exportação (KG)")
             if 'Exportacao_kg' in ncm_plot_data.columns and not ncm_plot_data['Exportacao_kg'].fillna(0).eq(0).all():
@@ -235,7 +201,6 @@ def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str
                                     labels={"Exportacao_kg": "KG Exportado", "Mês/Ano (Eixo X)": "Mês/Ano"},
                                     color_discrete_sequence=['rgb(26, 118, 255)'])
                 fig_export.update_traces(customdata=hover_data_exp, hovertemplate="Mês/Ano: %{x}<br>KG Exportado: %{customdata}<extra></extra>")
-
                 if 'Exportacao_kg_SMA' in ncm_plot_data.columns:
                     hover_data_sma_exp = ncm_plot_data['Exportacao_kg_SMA'].apply(lambda x: format_number_br(x, 2))
                     fig_export.add_trace(go.Scatter(x=ncm_plot_data['Mês/Ano (Eixo X)'], y=ncm_plot_data['Exportacao_kg_SMA'], mode='lines',
@@ -258,7 +223,6 @@ def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str
                 st.plotly_chart(fig_export, use_container_width=True)
             else:
                 st.write(f"<i>Sem dados de exportação significativos para {selected_key_display}.</i>", unsafe_allow_html=True)
-
         if "Importação (KG) - Total vs China" in selected_graphs:
             st.subheader("Análise de Importação (KG) - Total vs. China")
             if 'Importacao_kg_Total' in ncm_plot_data.columns and not ncm_plot_data['Importacao_kg_Total'].fillna(0).eq(0).all():
@@ -307,27 +271,20 @@ def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str
                 st.plotly_chart(fig_import, use_container_width=True)
             else:
                 st.write(f"<i>Sem dados de importação significativos para {selected_key_display}.</i>", unsafe_allow_html=True)
-
     if "Origem da Importação (Treemap)" in selected_graphs:
         st.subheader(f"Origem da Importação (KG) - Total 2024 & 2025 para {selected_key_display}")
-        
         df_filtered_for_treemap = df_cleaned[df_cleaned[COL_NCM_CODIGO].isin(ncms_to_process)].copy()
-        
         if df_filtered_for_treemap.empty:
             st.write(f"<i>Nenhum dado encontrado para {selected_key_display} para o gráfico de origem.</i>", unsafe_allow_html=True)
         else:
             imp_kg_2024_col = COL_IMPORT_KG_FORMAT.format(2024)
             imp_kg_2025_col = COL_IMPORT_KG_FORMAT.format(2025)
-
             if imp_kg_2024_col not in df_filtered_for_treemap.columns: df_filtered_for_treemap[imp_kg_2024_col] = 0
             if imp_kg_2025_col not in df_filtered_for_treemap.columns: df_filtered_for_treemap[imp_kg_2025_col] = 0
-            
             df_filtered_for_treemap['Total_Import_KG'] = pd.to_numeric(df_filtered_for_treemap[imp_kg_2024_col], errors='coerce').fillna(0) + \
                                                          pd.to_numeric(df_filtered_for_treemap[imp_kg_2025_col], errors='coerce').fillna(0)
-            
             origin_data = df_filtered_for_treemap.groupby(COL_PAIS)['Total_Import_KG'].sum().reset_index()
             origin_data = origin_data[origin_data['Total_Import_KG'] > 0].sort_values(by='Total_Import_KG', ascending=False)
-
             if origin_data.empty:
                 st.write(f"<i>Nenhuma importação registrada para {selected_key_display} em 2024 ou 2025 para o gráfico de origem.</i>", unsafe_allow_html=True)
             else:
@@ -336,10 +293,8 @@ def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str
                     origin_data[' udział (%)'] = (origin_data['Total_Import_KG'] / total_geral_import) * 100
                 else:
                     origin_data[' udział (%)'] = 0
-                    
                 origin_data['hover_text_kg'] = origin_data['Total_Import_KG'].apply(lambda x: format_number_br(x, 0))
                 origin_data['hover_text_perc'] = origin_data[' udział (%)'].apply(lambda x: format_number_br(x, 2) + "%")
-
                 fig_treemap = px.treemap(origin_data,
                                          path=[px.Constant(f"Importações {selected_key_display}"), COL_PAIS],
                                          values='Total_Import_KG',
@@ -353,17 +308,17 @@ def process_and_display_data(df_cleaned: pd.DataFrame, selected_key_display: str
                 )
                 fig_treemap.update_layout(margin = dict(t=50, l=25, r=25, b=25))
                 st.plotly_chart(fig_treemap, use_container_width=True)
-
                 st.write(f"Top 10 Países de Origem para {selected_key_display} (Importação KG):")
                 origin_data_display = origin_data.head(10).copy()
                 origin_data_display['Total_Import_KG'] = origin_data_display['Total_Import_KG'].apply(lambda x: format_number_br(x,0))
                 origin_data_display[' udział (%)'] = origin_data_display[' udział (%)'].apply(lambda x: format_number_br(x,2) + " %")
                 st.dataframe(origin_data_display[[COL_PAIS, 'Total_Import_KG', ' udział (%)']].reset_index(drop=True), hide_index=True)
 
+# --- Streamlit App ---
 st.set_page_config(layout="wide", page_title="Análise de Comércio Exterior de Aço")
 st.title("Dashboard de Análise de Comércio Exterior - Produtos Siderúrgicos")
 
-df_raw = load_data(FILE_PATH, SHEET_NAME) # FILE_PATH agora é o URL
+df_raw = load_data(FILE_PATH, SHEET_NAME)
 
 if df_raw.empty:
     st.warning("Nenhum dado carregado. Verifique o URL do arquivo e a aba.")
@@ -372,50 +327,81 @@ if df_raw.empty:
 df_cleaned = clean_data(df_raw)
 
 if df_cleaned.empty:
-    st.warning("Dados resultaram vazios após a limpeza.")
-    st.stop()
+    st.warning("Dados resultaram vazios após a limpeza e processamento de meses.") # Mensagem ajustada
+    # Mostrar mensagem de boas-vindas se o df_cleaned estiver vazio, mas df_raw não.
+    if not df_raw.empty:
+        st.info("Selecione um NCM ou Grupo na barra lateral para iniciar a análise.")
+    st.stop() # Parar aqui se df_cleaned for vazio
 
+# --- Geração de Opções para o Selectbox ---
 st.sidebar.header("Filtros")
-selector_options = {} 
+PLACEHOLDER_OPTION = "--- Selecione uma opção ---" # Placeholder
+selector_options_display_list = [PLACEHOLDER_OPTION] # Lista para o selectbox, começando com o placeholder
+selector_options_map = {} # Dicionário para mapear display -> (key, description)
 
+# Adicionar Grupos
 for group_name, ncms in NCM_GROUPS.items():
     display_option = f"GRUPO: {group_name}"
     description = GROUP_DESCRIPTIONS.get(group_name, f"Agregado do grupo {group_name}")
-    selector_options[display_option] = (group_name, description) 
+    selector_options_display_list.append(display_option)
+    selector_options_map[display_option] = (group_name, description)
 
+# Adicionar NCMs Individuais
 if COL_NCM_CODIGO in df_cleaned.columns and COL_NCM_DESCRICAO in df_cleaned.columns:
-    ncm_individual_options = df_cleaned[[COL_NCM_CODIGO, COL_NCM_DESCRICAO]].drop_duplicates().sort_values(by=COL_NCM_CODIGO)
-    for _, row in ncm_individual_options.iterrows():
-        ncm_cod = row[COL_NCM_CODIGO] 
-        ncm_desc = row[COL_NCM_DESCRICAO]
-        display_option = f"{ncm_cod} - {ncm_desc}" # O NCM individual já está sem pontos aqui
-        selector_options[display_option] = (ncm_cod, ncm_desc) 
-else:
-    st.sidebar.error(f"Colunas '{COL_NCM_CODIGO}' ou '{COL_NCM_DESCRICAO}' não encontradas.")
+    # Garantir que df_cleaned não está vazio antes de tentar acessar colunas
+    if not df_cleaned.empty:
+        ncm_individual_options = df_cleaned[[COL_NCM_CODIGO, COL_NCM_DESCRICAO]].drop_duplicates().sort_values(by=COL_NCM_CODIGO)
+        for _, row in ncm_individual_options.iterrows():
+            ncm_cod = row[COL_NCM_CODIGO]
+            ncm_desc = row[COL_NCM_DESCRICAO]
+            display_option = f"{ncm_cod} - {ncm_desc}"
+            selector_options_display_list.append(display_option)
+            selector_options_map[display_option] = (ncm_cod, ncm_desc)
+    # else: # Caso df_cleaned seja vazio, ncm_individual_options não será populado
+        # st.sidebar.warning("Nenhum NCM individual disponível para seleção pois os dados estão vazios após limpeza.")
+elif not df_cleaned.empty : # Se df_cleaned não for vazio mas as colunas NCM não existirem
+    st.sidebar.error(f"Colunas '{COL_NCM_CODIGO}' ou '{COL_NCM_DESCRICAO}' não encontradas nos dados limpos.")
 
+
+# Seletor de NCM/Grupo
 selected_display_option = st.sidebar.selectbox(
     "Selecione NCM ou Grupo:",
-    options=list(selector_options.keys()) 
+    options=selector_options_display_list,
+    index=0 # Define o placeholder como padrão
 )
 
+# Seleção de Gráficos a exibir
 graph_options_available = [
     "Exportação (KG)",
     "Importação (KG) - Total vs China",
     "Origem da Importação (Treemap)"
 ]
+
+# Definir gráficos default com base na seleção do NCM/Grupo
+default_graphs = []
+if selected_display_option != PLACEHOLDER_OPTION:
+    default_graphs = graph_options_available
+
+
 selected_graphs_to_display = st.sidebar.multiselect(
     "Selecione os gráficos para exibir:",
     options=graph_options_available,
-    default=graph_options_available
+    default=default_graphs # Usa a lista default_graphs
 )
 
-if selected_display_option:
-    key_for_processing, description_for_header = selector_options[selected_display_option]
-    process_and_display_data(df_cleaned, key_for_processing, description_for_header, selected_graphs_to_display)
+# Lógica principal de exibição
+if selected_display_option != PLACEHOLDER_OPTION and selected_display_option is not None:
+    if selected_graphs_to_display: # Só processa se houver gráficos selecionados
+        key_for_processing, description_for_header = selector_options_map[selected_display_option]
+        process_and_display_data(df_cleaned, key_for_processing, description_for_header, selected_graphs_to_display)
+    elif selected_display_option != PLACEHOLDER_OPTION : # Se um NCM/Grupo está selecionado mas nenhum gráfico
+        st.info("Selecione os tipos de gráficos que deseja visualizar na barra lateral.")
 else:
-    st.info("Por favor, selecione um NCM ou Grupo para visualizar os dados.")
+    st.info("Bem-vindo! Por favor, selecione um NCM ou um Grupo na barra lateral para iniciar a análise.")
+    st.markdown("Utilize também o seletor de gráficos para customizar sua visualização.")
 
 st.sidebar.markdown("---")
+
 
 
 
